@@ -37,8 +37,6 @@ __pycache__/
 tools/XeXtool/
 *.xex
 
-# Pac-Man leftovers moved aside during the Galaga cleanup (delete when no longer wanted)
-_pacman_leftovers/
 
 # Test-session logs (rexglue	est-session.bat)
 rexglue/logs/

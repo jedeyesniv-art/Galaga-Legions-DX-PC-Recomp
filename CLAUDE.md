@@ -56,7 +56,6 @@ Goal: runs well and light (Pac-Man ended at ~7% CPU, locked 60 fps, also on the 
 - Tools\stfs_extract.py     unpack an STFS package (read-only packages; follows hash chains): <pkg> <out> [--list]
 - Tools\ppcinspect.py       disassembler helper (capstone): modes fn / dis / words, on Private\default.exe
 - Tools\package_portable.ps1  portable folder dist\GalagaLegionsDX\ (+ -Release zips); adapted from Pac-Man, untested.
-- _pacman_leftovers\        (git-ignored) Pac-Man build outputs/logs moved aside during cleanup; owner may delete.
 
 ## Build environment
 Scripted builds run inside vcvars64 (not Developer PowerShell - it defaults to x86):
