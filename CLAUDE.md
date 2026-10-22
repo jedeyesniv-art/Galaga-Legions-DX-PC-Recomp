@@ -9,6 +9,12 @@ Game data comes from the owner's own console dump and is never committed or shar
 Goal: runs well and light (Pac-Man ended at ~7% CPU, locked 60 fps, also on the Steam Deck).
 
 ## Status
+- 2026-10-22: RELEASED 1.0.0 (owner: "perfect play" on PC and Steam Deck). Public repo
+  github.com/jedeyesniv-art/Galaga-Legions-DX-PC-Recomp (main pushed with fresh history; the full local history,
+  Pac-Man included, is on the unpushed branch pacman-history), release v1.0.0 with the windows + symbols zips and
+  the LGPL source archives (copied from the Pac-Man release: same SDK commit, same FFmpeg/libmspack revisions).
+  Release zip tested unpacked fresh with only the STFS package in game\. To release again: bump CMake VERSION,
+  package_portable.ps1 -Release, gh release create (dist\release-sources\ must hold the two archives).
 - 2026-10-22: BOOTS AND RUNS: title menu renders correctly, attract demo plays (screenshots at 20/35 s), closes
   cleanly, no errors in the log; ~1.3 cores of CPU in the menu/demo (no spin-wait hooks yet). Not yet tested:
   real gameplay with a pad, audio, saves. Two fixes got it there (galaga_config.toml):
