@@ -1,0 +1,136 @@
+// Spin-wait backoff and D3D command buffer sizing (hooked in galaga_config.toml), ported from the Pac-Man CE port.
+//
+// On the Xbox 360 D3D's GPU wait had a hardware thread to itself, so it polls with no delay; on a PC it pins a
+// core. The hook keeps the first moments of a wait as a tight spin (with a CPU pause), so a GPU that finishes
+// right away is still noticed within microseconds, then sleeps in short steps until the wait ends. Game logic is
+// unchanged.
+
+#include <rex/cvar.h>
+#include <rex/logging.h>
+#include <rex/ppc.h>
+
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+
+#include <windows.h> // the SDK build already defines WIN32_LEAN_AND_MEAN and NOMINMAX
+#include <immintrin.h>
+
+// Switches for A/B testing (e.g. galaga.exe --galaga_gpu_wait_backoff=false). Off = the original busy-wait.
+REXCVAR_DEFINE_BOOL(galaga_worker_backoff, true, "Galaga",
+                    "Sleep in idle polling loops of game threads instead of spinning");
+REXCVAR_DEFINE_BOOL(galaga_gpu_wait_backoff, true, "Galaga",
+                    "Sleep in D3D's wait-for-GPU polling loop instead of spinning");
+REXCVAR_DEFINE_UINT32(galaga_command_buffer_mb, 8, "Galaga",
+                      "D3D command buffer size in MB (the game's default is 2; 2 restores it)");
+REXCVAR_DEFINE_UINT32(galaga_command_segment_kb, 512, "Galaga",
+                      "D3D command buffer segment size in KB (power of two, 64-2048; the game's default is 64)");
+REXCVAR_DEFINE_UINT32(galaga_backoff_sleep_us, 250, "Galaga",
+                      "Length of each sleep step in the spin-wait backoff, in microseconds");
+
+namespace {
+
+// Idle polls spent spinning before sleeping (a pause is roughly 10-50 ns, so this is tens of microseconds).
+constexpr uint32_t WorkerSpinPolls = 2000;
+// GPU wait polls already include the guest's own delay loop, so fewer of them before sleeping.
+constexpr uint32_t GpuWaitSpinPolls = 200;
+// A GPU wait poll after this long a gap starts a new wait (D3D waits about once per frame).
+constexpr auto NewWaitGap = std::chrono::milliseconds(2);
+
+// Sleeps for about galaga_backoff_sleep_us. Sleep(1) would round up to a whole millisecond or more, so this uses
+// a high-resolution waitable timer (one per thread), falling back to Sleep(1) if it isn't available.
+void ShortSleep() {
+  thread_local HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                                     TIMER_ALL_ACCESS);
+  if (timer == nullptr) {
+    Sleep(1);
+    return;
+  }
+  LARGE_INTEGER due;
+  due.QuadPart = -int64_t(REXCVAR_GET(galaga_backoff_sleep_us)) * 10;  // relative, 100 ns units
+  if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE))
+    WaitForSingleObject(timer, INFINITE);
+}
+
+void IdlePoll(uint32_t& idlePolls, uint32_t spinPolls) {
+  if (idlePolls < spinPolls) {
+    idlePolls++;
+    _mm_pause();
+  } else {
+    ShortSleep();
+  }
+}
+
+}  // namespace
+
+// Lets the sampling profiler find polling worker threads (profiler.cpp).
+void ProfilerNoteWorkerThread();
+
+// Generic worker idle poll: `busy` true means work was found (reset to spinning), false means idle.
+// For game threads that poll a control word with no delay; none found in Galaga yet (see CLAUDE.md).
+void WorkerIdlePoll(bool busy) {
+  thread_local bool registered = false;
+  if (!registered) {
+    registered = true;
+    ProfilerNoteWorkerThread();
+  }
+  if (!REXCVAR_GET(galaga_worker_backoff))
+    return;
+  thread_local uint32_t idlePolls = 0;
+  if (busy)
+    idlePolls = 0;
+  else
+    IdlePoll(idlePolls, WorkerSpinPolls);
+}
+
+// D3D's command buffer (D3DRING_BUFFER_PARAMETERS in the ring-buffer setup sub_8207D750; same D3D code as
+// Pac-Man's): the game uses the defaults, 2 MB in 32 segments of 64 KB. Each frame starts a new segment, and
+// starting another one mid-frame waits until the previous frame has been flipped (the next vblank), so in
+// Pac-Man a frame with more commands than one segment always missed its vblank (~90% of the remaining slow
+// frames; 8 MB / 512 KB segments cut them 6x, no added latency). Only applied when the game left both at their
+// defaults.
+void CommandBufferSizeHook(PPCRegister& size, PPCRegister& segments) {
+  constexpr uint32_t DefaultSize = 0x200000;
+  const uint32_t megabytes = REXCVAR_GET(galaga_command_buffer_mb);
+  uint32_t segment_kb = REXCVAR_GET(galaga_command_segment_kb);
+  if (size.u32 != DefaultSize || segments.u32 != 0 || megabytes <= 2 || megabytes > 64) {
+    REXLOG_INFO("D3D command buffer: left as is ({} bytes, {} segments)", size.u32, segments.u32);
+    return;
+  }
+  if (segment_kb < 64 || segment_kb > 2048 || (segment_kb & (segment_kb - 1)) != 0)
+    segment_kb = 64;
+  size.u32 = megabytes * 0x100000;
+  segments.u32 = size.u32 / (segment_kb * 1024);
+  REXLOG_INFO("D3D command buffer: {} MB in {} segments of {} KB (game default 2 MB, 64 KB)", megabytes,
+              segments.u32, segment_kb);
+}
+
+// Total time the CPU has spent in D3D's GPU wait, for frame_stats.cpp: the gaps between consecutive polls of
+// the same wait. Measured whether or not the backoff is on, so A/B runs are comparable.
+static std::atomic<uint64_t> g_gpuWaitNanoseconds{0};
+
+uint64_t GpuWaitNanoseconds() {
+  return g_gpuWaitNanoseconds.load(std::memory_order_relaxed);
+}
+
+// Frame trace: each poll of a GPU wait (frame_stats.cpp).
+void FrameTraceGpuWaitPoll(uint32_t r1, bool newWait);
+
+// D3D's GPU wait poll (sub_82087030, called in a loop by the fence and buffer waits): once per poll, after its
+// own short delay loop.
+void GpuWaitPollHook(PPCRegister& r1) {
+  thread_local uint32_t idlePolls = 0;
+  thread_local auto lastPoll = std::chrono::steady_clock::time_point{};
+  const auto now = std::chrono::steady_clock::now();
+  const auto sinceLast = now - lastPoll;
+  const bool newWait = sinceLast > NewWaitGap;
+  if (newWait)
+    idlePolls = 0;
+  FrameTraceGpuWaitPoll(r1.u32, newWait);
+  if (!newWait)
+    g_gpuWaitNanoseconds.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(sinceLast).count(),
+                                   std::memory_order_relaxed);
+  lastPoll = now;  // gaps run start to start, so they include any sleep below
+  if (REXCVAR_GET(galaga_gpu_wait_backoff))
+    IdlePoll(idlePolls, GpuWaitSpinPolls);
+}

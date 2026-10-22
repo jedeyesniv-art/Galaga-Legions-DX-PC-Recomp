@@ -1,0 +1,215 @@
+# Galaga Legions DX codegen config (included by galaga_manifest.toml).
+
+# MSVC CRT setjmp / longjmp (same code as Pac-Man CE's). setjmp first checks an SEH hook pointer (0x82B446F8,
+# zero in the image) and otherwise takes the plain path. Used by D3DX's libjpeg error handling: without these,
+# a longjmp out of a failed decode returned into the decoder with torn-down state (null read of cinfo+0x1A4 in
+# sub_82175D78, libjpeg's read_markers, while loading data\texture).
+setjmp_address = 0x821B0E70
+longjmp_address = 0x821B0B50
+
+# Function starts analysis misses: reached only through vtables (in .rdata 0x8200B0E8, 0x8203ED28..0x820455F8)
+# and without .pdata - mostly this-adjusting thunks (addi r3,r3,-N; b method) plus a few leaf methods. Found by
+# scanning .rdata for code pointers that aren't registered functions and follow a terminator (blr / b / 0),
+# minus SEH scope-table targets (0x8205FF20..0x820603E0: continuation points inside functions). The first one
+# hit at run time was 0x821C1B60 ("Call to invalid or unregistered function").
+[functions]
+0x820BB148 = {}
+0x821B5228 = {}
+0x821B5E50 = {}
+0x821B8B30 = {}
+0x821BB748 = {}
+0x821BB750 = {}
+0x821BB758 = {}
+0x821BB768 = {}
+0x821BB770 = {}
+0x821BB7C8 = {}
+0x821C1B38 = {}
+0x821C1B40 = {}
+0x821C1B48 = {}
+0x821C1B58 = {}
+0x821C1B60 = {}
+0x821C1EF8 = {}
+0x821C1F00 = {}
+0x821C1F08 = {}
+0x821C1F10 = {}
+0x821C1F18 = {}
+0x821C1F20 = {}
+0x821C1F28 = {}
+0x821C1F30 = {}
+0x821C1F38 = {}
+0x821D7160 = {}
+0x821D7F98 = {}
+0x821EB7A8 = {}
+
+# ---- Hooks ported from the Pac-Man CE port. The D3D library is a newer XDK (2.0.20500 vs 4929) but the same code
+# ---- in these places; device fields moved by 0x100 (e.g. +0x2A10 -> +0x2B10).
+
+# D3D's GPU wait poll (src/spin_hooks.cpp; sub_82087030, called in a loop by the fence and buffer waits): a few
+# delay hints, then a check of the GPU's progress. Hooked after the delay loop, once per poll.
+[[midasm_hook]]
+address = 0x82087078
+name = "GpuWaitPollHook"
+registers = ["r1"]
+
+# D3D command buffer size (src/spin_hooks.cpp). The ring-buffer setup sub_8207D750 reads D3DRING_BUFFER_PARAMETERS
+# (+0xC size, default 2 MB in r28; +0x14 segment count, default 32, in r11). Hooked after the size default.
+[[midasm_hook]]
+address = 0x8207D85C
+name = "CommandBufferSizeHook"
+registers = ["r28", "r11"]
+
+# D3D wait timing (src/frame_stats.cpp): the slow paths of the two waits a frame can stall in.
+# Command buffer full - sub_8207BC88 waits for the GPU's read position (status block +4) to pass reused space.
+[[midasm_hook]]
+address = 0x8207BCC8
+name = "BufferWaitBeginHook"
+[[midasm_hook]]
+address = 0x8207BD10
+name = "BufferWaitEndHook"
+# Fence wait - sub_8207C3D0 waits for the GPU to reach a fence.
+[[midasm_hook]]
+address = 0x8207C44C
+name = "FenceWaitBeginHook"
+[[midasm_hook]]
+address = 0x8207C48C
+name = "FenceWaitEndHook"
+
+# Vblank-interrupt timing (src/frame_stats.cpp): entry of the graphics interrupt callback sub_8207BFA8
+# (registered with VdSetGraphicsInterruptCallback); r3 = source (0 = vblank, 1 = command buffer).
+[[midasm_hook]]
+address = 0x8207BFA8
+name = "InterruptHook"
+registers = ["r3"]
+
+# Frame-time monitor (src/frame_stats.cpp): the game's only VdSwap call (bl 0x82209E38 in sub_82074FD0).
+[[midasm_hook]]
+address = 0x82075290
+name = "FrameHook"
+
+# The title menu's Achievements item: entry of sub_8215A858 (li r4,0; b XamShowAchievementsUI, a stub in the
+# SDK). AchievementsUiHook (main.cpp) opens the SDK's achievements overlay instead.
+[[midasm_hook]]
+address = 0x8215A858
+name = "AchievementsUiHook"
+# ... and the game's controller poll, after the XInputGetState wrapper (bl sub_82159DA8 in sub_820B7AC0; r27 = user,
+# r3 = result, state at r1+0xA0): while the overlay is open the game sees no buttons and B closes it.
+[[midasm_hook]]
+address = 0x820B7BA0
+name = "AchievementsInputHook"
+registers = ["r1", "r3", "r27"]
+
+# Frame trace (src/frame_stats.cpp, --galaga_frame_trace): each call of the fence wait sub_8207C3D0, so the trace
+# shows which caller waits. Hooked on the bl instructions.
+[[midasm_hook]]
+address = 0x820755D0
+name = "FenceCallHook_820755D0"
+[[midasm_hook]]
+address = 0x8207B6A4
+name = "FenceCallHook_8207B6A4"
+[[midasm_hook]]
+address = 0x8207B6F0
+name = "FenceCallHook_8207B6F0"
+[[midasm_hook]]
+address = 0x8207B720
+name = "FenceCallHook_8207B720"
+[[midasm_hook]]
+address = 0x8207B74C
+name = "FenceCallHook_8207B74C"
+[[midasm_hook]]
+address = 0x8207B7B0
+name = "FenceCallHook_8207B7B0"
+[[midasm_hook]]
+address = 0x8207B7E0
+name = "FenceCallHook_8207B7E0"
+[[midasm_hook]]
+address = 0x8207B810
+name = "FenceCallHook_8207B810"
+[[midasm_hook]]
+address = 0x8207B840
+name = "FenceCallHook_8207B840"
+[[midasm_hook]]
+address = 0x8207B9BC
+name = "FenceCallHook_8207B9BC"
+[[midasm_hook]]
+address = 0x8207C4E8
+name = "FenceCallHook_8207C4E8"
+[[midasm_hook]]
+address = 0x8207C898
+name = "FenceCallHook_8207C898"
+[[midasm_hook]]
+address = 0x8207D500
+name = "FenceCallHook_8207D500"
+[[midasm_hook]]
+address = 0x8207D72C
+name = "FenceCallHook_8207D72C"
+
+# Diagnostics (src/diagnostics.cpp): every call the game makes to a function that stops it or its thread is
+# logged with its arguments (the SDK logs these at debug level at most). Hooked on the bl / b instructions.
+[[midasm_hook]]
+address = 0x82070AA4
+name = "StopHook_82070AA4"  # XamLoaderTerminateTitle
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x82070C0C
+name = "StopHook_82070C0C"  # XamLoaderTerminateTitle
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x8207250C
+name = "StopHook_8207250C"  # KeBugCheckEx
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x820732AC
+name = "StopHook_820732AC"  # KeBugCheckEx
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x82073AA8
+name = "StopHook_82073AA8"  # RtlRaiseException
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x82073BA0
+name = "StopHook_82073BA0"  # KeBugCheckEx
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x82073EA4
+name = "StopHook_82073EA4"  # KeBugCheckEx
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x82074648
+name = "StopHook_82074648"  # RtlRaiseException
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x8208DB4C
+name = "StopHook_8208DB4C"  # KeBugCheck
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x8208DCE0
+name = "StopHook_8208DCE0"  # KeBugCheck
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x8213C054
+name = "StopHook_8213C054"  # KeBugCheck
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x8213C154
+name = "StopHook_8213C154"  # KeBugCheck
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x8213C260
+name = "StopHook_8213C260"  # KeBugCheck
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x8213E4CC
+name = "StopHook_8213E4CC"  # KeBugCheck
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x82143718
+name = "StopHook_82143718"  # KeBugCheck
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x8215ACDC
+name = "StopHook_8215ACDC"  # RtlRaiseException
+registers = ["r3", "r4", "r5", "r6", "r7"]
+[[midasm_hook]]
+address = 0x8215CBC8
+name = "StopHook_8215CBC8"  # ExTerminateThread
+registers = ["r3", "r4", "r5", "r6", "r7"]

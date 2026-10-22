@@ -1,0 +1,11 @@
+# Galaga Legions DX - ReXGlue project manifest.
+
+[project]
+name = "galaga"
+sdk_version = "0.10.0"
+game_root = "../private"
+
+[entrypoint]
+file_path = "../private/default.xex"
+out_directory_path = "generated/default"
+includes = ["galaga_config.toml"]

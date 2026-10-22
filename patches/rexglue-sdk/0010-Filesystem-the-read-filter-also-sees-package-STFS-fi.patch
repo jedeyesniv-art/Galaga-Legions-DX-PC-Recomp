@@ -1,0 +1,49 @@
+From 1e63afc3fe6d31e071a3b44a3b4dcd02abfb7cc9 Mon Sep 17 00:00:00 2001
+From: John <326213404+jedeyesniv-art@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 13:02:41 +0100
+Subject: [PATCH] Filesystem: the read filter also sees package (STFS) file
+ reads
+
+StfsContainerFile::ReadSync now calls the app's FileReadFilter like HostPathFile
+does, so data fixes work when the game runs from its console package.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ include/rex/filesystem/file.h                  | 5 +++--
+ src/filesystem/devices/stfs_container_file.cpp | 4 ++++
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/include/rex/filesystem/file.h b/include/rex/filesystem/file.h
+index b77b730..b3ec037 100644
+--- a/include/rex/filesystem/file.h
++++ b/include/rex/filesystem/file.h
+@@ -68,8 +68,9 @@ class File {
+   Entry* entry_ = nullptr;
+ };
+ 
+-// Optional app hook (e.g. data mods): called after every successful read from a host file with the file's entry,
+-// the byte offset of the read and the bytes read, which it may modify in place. One filter at a time.
++// Optional app hook (e.g. data mods): called after every successful read from a host or package (STFS) file with
++// the file's entry, the byte offset of the read and the bytes read, which it may modify in place. One filter at a
++// time.
+ using FileReadFilter = void (*)(const Entry& entry, size_t byte_offset, std::span<uint8_t> data);
+ void SetFileReadFilter(FileReadFilter filter);
+ FileReadFilter GetFileReadFilter();
+diff --git a/src/filesystem/devices/stfs_container_file.cpp b/src/filesystem/devices/stfs_container_file.cpp
+index 0dd13f3..a8be5a0 100644
+--- a/src/filesystem/devices/stfs_container_file.cpp
++++ b/src/filesystem/devices/stfs_container_file.cpp
+@@ -63,6 +63,10 @@ X_STATUS StfsContainerFile::ReadSync(std::span<uint8_t> buffer, size_t byte_offs
+     }
+   }
+ 
++  // The app's read filter (file.h) sees package files too, not only host files.
++  if (FileReadFilter filter = GetFileReadFilter(); filter != nullptr) {
++    filter(*entry_, byte_offset, buffer.first(*out_bytes_read));
++  }
+   return X_STATUS_SUCCESS;
+ }
+ 
+-- 
+2.55.0.windows.5
+
